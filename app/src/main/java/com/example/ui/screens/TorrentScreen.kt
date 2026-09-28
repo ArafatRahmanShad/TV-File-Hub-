@@ -18,10 +18,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -46,9 +50,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.database.TorrentEntity
 import com.example.storage.StorageManager
 import com.example.torrent.TorrentManager
@@ -70,8 +80,22 @@ fun TorrentScreen(
   var magnetInputText by remember { mutableStateOf("") }
   var targetDest by remember { mutableStateOf(if (usbConnected) "USB_HDD" else "INTERNAL") }
 
+  val focusManager = LocalFocusManager.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val clipboardManager = LocalClipboardManager.current
+
+  val closeAddMagnetDialog: () -> Unit = {
+    focusManager.clearFocus(force = true)
+    keyboardController?.hide()
+    showAddMagnetDialog = false
+  }
+
   BackHandler {
-    onBackToHome()
+    if (showAddMagnetDialog) {
+      closeAddMagnetDialog()
+    } else {
+      onBackToHome()
+    }
   }
 
   Column(
@@ -180,7 +204,11 @@ fun TorrentScreen(
   // Add Magnet Dialog
   if (showAddMagnetDialog) {
     AlertDialog(
-      onDismissRequest = { showAddMagnetDialog = false },
+      onDismissRequest = { closeAddMagnetDialog() },
+      properties = DialogProperties(
+        dismissOnBackPress = true,
+        dismissOnClickOutside = true
+      ),
       title = { Text("Add Magnet Link") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -191,8 +219,48 @@ fun TorrentScreen(
             placeholder = { Text("magnet:?xt=urn:btih:...") },
             singleLine = false,
             maxLines = 4,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            trailingIcon = {
+              IconButton(onClick = {
+                val clip = clipboardManager.getText()?.text
+                if (!clip.isNullOrBlank()) {
+                  magnetInputText = clip.trim()
+                }
+              }) {
+                Icon(
+                  imageVector = Icons.Default.ContentPaste,
+                  contentDescription = "Paste from Clipboard",
+                  tint = MaterialTheme.colorScheme.primary
+                )
+              }
+            },
+            keyboardOptions = KeyboardOptions(
+              keyboardType = KeyboardType.Uri,
+              imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(
+              onDone = {
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
+              }
+            )
           )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+          ) {
+            TextButton(onClick = {
+              val clip = clipboardManager.getText()?.text
+              if (!clip.isNullOrBlank()) {
+                magnetInputText = clip.trim()
+              }
+            }) {
+              Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Paste from Clipboard", fontSize = 12.sp)
+            }
+          }
 
           Text("Destination:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -215,16 +283,18 @@ fun TorrentScreen(
           isPrimary = true,
           onClick = {
             if (magnetInputText.isNotBlank()) {
+              val uriToAdd = magnetInputText.trim()
+              val destination = targetDest
+              closeAddMagnetDialog()
               scope.launch {
-                torrentManager.addMagnet(magnetInputText.trim(), targetDest)
-                showAddMagnetDialog = false
+                torrentManager.addMagnet(uriToAdd, destination)
               }
             }
           }
         )
       },
       dismissButton = {
-        TextButton(onClick = { showAddMagnetDialog = false }) {
+        TextButton(onClick = { closeAddMagnetDialog() }) {
           Text("Cancel")
         }
       }

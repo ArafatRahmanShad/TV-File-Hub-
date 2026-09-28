@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -59,9 +61,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.documentfile.provider.DocumentFile
 import com.example.storage.FileCategory
 import com.example.storage.FileItem
@@ -108,6 +114,21 @@ fun FileManagerScreen(
   var showRenameDialog by remember { mutableStateOf<FileItem?>(null) }
   var renameNewName by remember { mutableStateOf("") }
   var showDeleteDialog by remember { mutableStateOf<FileItem?>(null) }
+
+  val focusManager = LocalFocusManager.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+
+  val closeNewFolderDialog: () -> Unit = {
+    focusManager.clearFocus(force = true)
+    keyboardController?.hide()
+    showNewFolderDialog = false
+  }
+
+  val closeRenameDialog: () -> Unit = {
+    focusManager.clearFocus(force = true)
+    keyboardController?.hide()
+    showRenameDialog = null
+  }
 
   fun loadFiles() {
     scope.launch {
@@ -416,7 +437,11 @@ fun FileManagerScreen(
   // New Folder Dialog
   if (showNewFolderDialog) {
     AlertDialog(
-      onDismissRequest = { showNewFolderDialog = false },
+      onDismissRequest = { closeNewFolderDialog() },
+      properties = DialogProperties(
+        dismissOnBackPress = true,
+        dismissOnClickOutside = true
+      ),
       title = { Text("Create New Folder") },
       text = {
         OutlinedTextField(
@@ -424,7 +449,14 @@ fun FileManagerScreen(
           onValueChange = { newFolderName = it },
           label = { Text("Folder Name") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth()
+          modifier = Modifier.fillMaxWidth(),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions = KeyboardActions(
+            onDone = {
+              focusManager.clearFocus(force = true)
+              keyboardController?.hide()
+            }
+          )
         )
       },
       confirmButton = {
@@ -433,16 +465,17 @@ fun FileManagerScreen(
           isPrimary = true,
           onClick = {
             if (newFolderName.isNotBlank()) {
+              val folderToCreate = newFolderName.trim()
+              closeNewFolderDialog()
               scope.launch {
                 if (!isUsbMode) {
-                  StorageManager.createInternalFolder(currentInternalDir, newFolderName.trim())
+                  StorageManager.createInternalFolder(currentInternalDir, folderToCreate)
                 } else {
                   val current = currentUsbDoc ?: UsbHddManager.getRootDocument(context, usbTreeUri)
                   if (current != null) {
-                    UsbHddManager.createUsbFolder(current, newFolderName.trim())
+                    UsbHddManager.createUsbFolder(current, folderToCreate)
                   }
                 }
-                showNewFolderDialog = false
                 loadFiles()
               }
             }
@@ -450,7 +483,7 @@ fun FileManagerScreen(
         )
       },
       dismissButton = {
-        TextButton(onClick = { showNewFolderDialog = false }) {
+        TextButton(onClick = { closeNewFolderDialog() }) {
           Text("Cancel")
         }
       }
@@ -461,7 +494,11 @@ fun FileManagerScreen(
   if (showRenameDialog != null) {
     val file = showRenameDialog!!
     AlertDialog(
-      onDismissRequest = { showRenameDialog = null },
+      onDismissRequest = { closeRenameDialog() },
+      properties = DialogProperties(
+        dismissOnBackPress = true,
+        dismissOnClickOutside = true
+      ),
       title = { Text("Rename ${file.name}") },
       text = {
         OutlinedTextField(
@@ -469,7 +506,14 @@ fun FileManagerScreen(
           onValueChange = { renameNewName = it },
           label = { Text("New Name") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth()
+          modifier = Modifier.fillMaxWidth(),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions = KeyboardActions(
+            onDone = {
+              focusManager.clearFocus(force = true)
+              keyboardController?.hide()
+            }
+          )
         )
       },
       confirmButton = {
@@ -478,16 +522,17 @@ fun FileManagerScreen(
           isPrimary = true,
           onClick = {
             if (renameNewName.isNotBlank() && renameNewName != file.name) {
+              val targetName = renameNewName.trim()
+              closeRenameDialog()
               scope.launch {
                 if (!file.isUsb) {
-                  StorageManager.renameInternal(File(file.path), renameNewName.trim())
+                  StorageManager.renameInternal(File(file.path), targetName)
                 } else {
                   val current = currentUsbDoc ?: UsbHddManager.getRootDocument(context, usbTreeUri)
                   current?.findFile(file.name)?.let {
-                    UsbHddManager.renameUsbFile(it, renameNewName.trim())
+                    UsbHddManager.renameUsbFile(it, targetName)
                   }
                 }
-                showRenameDialog = null
                 loadFiles()
               }
             }
@@ -495,7 +540,7 @@ fun FileManagerScreen(
         )
       },
       dismissButton = {
-        TextButton(onClick = { showRenameDialog = null }) {
+        TextButton(onClick = { closeRenameDialog() }) {
           Text("Cancel")
         }
       }
