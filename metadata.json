@@ -1,0 +1,6 @@
+{
+  "name": "TV File Hub",
+  "description": "Android TV personal media & download hub with file manager, USB HDD support, media player, download manager, torrent client, and phone remote control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
