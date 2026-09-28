@@ -15,11 +15,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
 
-// আপনার প্রজেক্টের সব সাব-ফোল্ডারের ইম্পোর্ট ফিক্স
-import com.example.torrent.data.*
-import com.example.torrent.db.*
-import com.example.torrent.model.*
-
 class TorrentManager private constructor(context: Context) {
 
     private val appContext: Context = context.applicationContext
