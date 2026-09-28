@@ -1,7 +1,5 @@
 package com.example.torrent
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager

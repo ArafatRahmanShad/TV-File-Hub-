@@ -2,8 +2,6 @@ package com.example
 
 import android.net.Uri
 import android.os.Bundle
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
