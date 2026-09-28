@@ -64,6 +64,15 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+      pickFirsts += "**/libjlibtorrent.so"
+    }
+    resources {
+      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
@@ -88,6 +97,10 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation("com.frostwire:jlibtorrent:1.2.19.0")
+  implementation("com.frostwire:jlibtorrent-android-arm:1.2.19.0")
+  implementation("com.frostwire:jlibtorrent-android-arm64:1.2.19.0")
+  implementation("com.frostwire:jlibtorrent-android-x86:1.2.19.0")
+  implementation("com.frostwire:jlibtorrent-android-x86_64:1.2.19.0")
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)

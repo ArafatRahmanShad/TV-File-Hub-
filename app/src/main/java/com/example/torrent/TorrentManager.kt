@@ -40,8 +40,11 @@ class TorrentManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private var loopJob: Job? = null
 
-    // Real jlibtorrent Engine Instance
-    private val sessionManager = SessionManager()
+    // Real jlibtorrent Engine Instance (safely initialized to prevent crash if native .so fails)
+    @Volatile
+    private var sessionManager: SessionManager? = null
+    @Volatile
+    private var isEngineReady: Boolean = false
 
     val allTorrents: Flow<List<TorrentEntity>> = dao.getAllTorrents()
 
@@ -53,6 +56,7 @@ class TorrentManager private constructor(private val context: Context) {
     // ১. প্রাইভেট ট্র্যাকার অনুযায়ী qBittorrent 4.5.2 স্পুফিং কনফিগারেশন
     private fun initTorrentEngine() {
         try {
+            val sm = SessionManager()
             val settings = SettingsPack()
 
             // User-Agent: qBittorrent/4.5.2
@@ -70,10 +74,15 @@ class TorrentManager private constructor(private val context: Context) {
             // Anonymous mode বন্ধ রাখা যেন ট্র্যাকার সঠিক Header পায়
             settings.anonymousMode(false)
 
-            sessionManager.applySettings(settings)
-            sessionManager.start()
-        } catch (e: Exception) {
+            sm.applySettings(settings)
+            sm.start()
+            sessionManager = sm
+            isEngineReady = true
+        } catch (e: Throwable) {
+            // UnsatisfiedLinkError বা C++ crash ব্লক করে অ্যাপ চালু রাখা
             e.printStackTrace()
+            sessionManager = null
+            isEngineReady = false
         }
     }
 
@@ -83,7 +92,7 @@ class TorrentManager private constructor(private val context: Context) {
             while (isActive) {
                 try {
                     processTorrentTick()
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     e.printStackTrace()
                 }
                 delay(1000) // প্রতি ১ সেকেন্ড পর পর রিয়েল স্ট্যাটাস আপডেট হবে
@@ -93,45 +102,50 @@ class TorrentManager private constructor(private val context: Context) {
 
     // ২. jlibtorrent থেকে আসল ডাউনলোড স্পিড, প্রোগ্রেস ও সিড ডাটাবেজে আপডেট
     private suspend fun processTorrentTick() {
+        val sm = sessionManager ?: return
         val activeList = dao.getActiveTorrents()
         if (activeList.isEmpty()) return
 
         for (torrent in activeList) {
-            val sha1 = runCatching { Sha1Hash(torrent.id) }.getOrNull() ?: continue
-            val handle = sessionManager.find(sha1)
+            try {
+                val sha1 = runCatching { Sha1Hash(torrent.id) }.getOrNull() ?: continue
+                val handle = sm.find(sha1)
 
-            if (handle != null && handle.isValid) {
-                val status = handle.status()
+                if (handle != null && handle.isValid) {
+                    val status = handle.status()
 
-                val progress = status.progress() // 0.0f to 1.0f
-                val downloaded = status.totalDone()
-                val total = if (status.totalWanted() > 0) status.totalWanted() else torrent.totalBytes
-                val dlSpeed = status.downloadPayloadRate().toLong()
-                val ulSpeed = status.uploadPayloadRate().toLong()
-                val uploaded = status.totalUpload()
-                val peers = status.numPeers()
-                val seeds = status.numSeeds()
-                val ratio = if (downloaded > 0) uploaded.toFloat() / downloaded.toFloat() else 0f
+                    val progress = status.progress() // 0.0f to 1.0f
+                    val downloaded = status.totalDone()
+                    val total = if (status.totalWanted() > 0) status.totalWanted() else torrent.totalBytes
+                    val dlSpeed = status.downloadPayloadRate().toLong()
+                    val ulSpeed = status.uploadPayloadRate().toLong()
+                    val uploaded = status.totalUpload()
+                    val peers = status.numPeers()
+                    val seeds = status.numSeeds()
+                    val ratio = if (downloaded > 0) uploaded.toFloat() / downloaded.toFloat() else 0f
 
-                val currentStatusStr = when {
-                    status.isFinished || progress >= 1.0f -> "SEEDING"
-                    torrent.status == "PAUSED" -> "PAUSED"
-                    else -> "DOWNLOADING"
+                    val currentStatusStr = when {
+                        status.isFinished || progress >= 1.0f -> "SEEDING"
+                        torrent.status == "PAUSED" -> "PAUSED"
+                        else -> "DOWNLOADING"
+                    }
+
+                    dao.updateProgress(
+                        id = torrent.id,
+                        progress = progress,
+                        downloaded = downloaded,
+                        total = total,
+                        dlSpeed = dlSpeed,
+                        ulSpeed = ulSpeed,
+                        uploaded = uploaded,
+                        peers = peers,
+                        seeds = seeds,
+                        ratio = ratio,
+                        status = currentStatusStr
+                    )
                 }
-
-                dao.updateProgress(
-                    id = torrent.id,
-                    progress = progress,
-                    downloaded = downloaded,
-                    total = total,
-                    dlSpeed = dlSpeed,
-                    ulSpeed = ulSpeed,
-                    uploaded = uploaded,
-                    peers = peers,
-                    seeds = seeds,
-                    ratio = ratio,
-                    status = currentStatusStr
-                )
+            } catch (e: Throwable) {
+                e.printStackTrace()
             }
         }
     }
@@ -189,7 +203,11 @@ class TorrentManager private constructor(private val context: Context) {
         dao.insertOrUpdate(entity)
 
         // jlibtorrent ইঞ্জিনে আসল ডাউনলোড স্টার্ট করা
-        sessionManager.download(cleanMagnet, saveDir)
+        try {
+            sessionManager?.download(cleanMagnet, saveDir)
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
 
         startEngineLoop()
         infoHash
@@ -197,16 +215,24 @@ class TorrentManager private constructor(private val context: Context) {
 
     fun pauseTorrent(id: String) {
         scope.launch {
-            val handle = runCatching { Sha1Hash(id) }.getOrNull()?.let { sessionManager.find(it) }
-            handle?.pause()
+            try {
+                val handle = sessionManager?.let { sm -> runCatching { Sha1Hash(id) }.getOrNull()?.let { sm.find(it) } }
+                handle?.pause()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
             dao.updateStatus(id, "PAUSED")
         }
     }
 
     fun resumeTorrent(id: String) {
         scope.launch {
-            val handle = runCatching { Sha1Hash(id) }.getOrNull()?.let { sessionManager.find(it) }
-            handle?.resume()
+            try {
+                val handle = sessionManager?.let { sm -> runCatching { Sha1Hash(id) }.getOrNull()?.let { sm.find(it) } }
+                handle?.resume()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
             val torrent = dao.getTorrentById(id) ?: return@launch
             val newStatus = if (torrent.progress >= 1f) "SEEDING" else "DOWNLOADING"
             dao.updateStatus(id, newStatus)
@@ -216,9 +242,14 @@ class TorrentManager private constructor(private val context: Context) {
 
     fun deleteTorrent(id: String, deleteFiles: Boolean = true) {
         scope.launch {
-            val handle = runCatching { Sha1Hash(id) }.getOrNull()?.let { sessionManager.find(it) }
-            if (handle != null && handle.isValid) {
-                sessionManager.remove(handle)
+            try {
+                val sm = sessionManager
+                val handle = sm?.let { runCatching { Sha1Hash(id) }.getOrNull()?.let { sm.find(it) } }
+                if (handle != null && handle.isValid) {
+                    sm.remove(handle)
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
             }
             dao.deleteById(id)
         }

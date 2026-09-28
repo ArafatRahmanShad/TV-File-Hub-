@@ -31,7 +31,8 @@ class ExampleRobolectricTest {
   @Test
   fun `test storage formatting`() {
     assertEquals("0 B", StorageManager.formatSize(0))
-    assertEquals("1024 B", StorageManager.formatSize(1024))
+    assertEquals("500 B", StorageManager.formatSize(500))
+    assertEquals("1 KB", StorageManager.formatSize(1024))
     assertTrue(StorageManager.formatSize(1024 * 1024).contains("MB"))
     assertTrue(StorageManager.formatSize(1024L * 1024L * 1024L * 5L).contains("GB"))
     assertEquals(FileCategory.VIDEO, StorageManager.determineCategory("movie.mkv"))
