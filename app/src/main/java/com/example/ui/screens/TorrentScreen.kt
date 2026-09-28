@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -26,12 +29,12 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,6 +93,19 @@ fun TorrentScreen(
     showAddMagnetDialog = false
   }
 
+  // File picker launcher for .torrent files
+  val torrentFilePicker = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocument()
+  ) { uri: Uri? ->
+    if (uri != null) {
+      val destination = targetDest
+      closeAddMagnetDialog()
+      scope.launch {
+        torrentManager.addTorrentFile(uri, destination)
+      }
+    }
+  }
+
   BackHandler {
     if (showAddMagnetDialog) {
       closeAddMagnetDialog()
@@ -145,15 +161,25 @@ fun TorrentScreen(
         }
       }
 
-      TvButton(
-        text = "Add Magnet Link",
-        icon = Icons.Default.Add,
-        isPrimary = true,
-        onClick = {
-          magnetInputText = ""
-          showAddMagnetDialog = true
-        }
-      )
+      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        TvButton(
+          text = "Pick .torrent File",
+          icon = Icons.Default.Description,
+          onClick = {
+            torrentFilePicker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*"))
+          }
+        )
+
+        TvButton(
+          text = "Add Magnet Link",
+          icon = Icons.Default.Add,
+          isPrimary = true,
+          onClick = {
+            magnetInputText = ""
+            showAddMagnetDialog = true
+          }
+        )
+      }
     }
 
     Spacer(modifier = Modifier.height(10.dp))
@@ -179,12 +205,22 @@ fun TorrentScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 16.sp
               )
-              Spacer(modifier = Modifier.height(12.dp))
-              TvButton(
-                text = "Add Magnet Link",
-                icon = Icons.Default.Add,
-                onClick = { showAddMagnetDialog = true }
-              )
+              Spacer(modifier = Modifier.height(14.dp))
+              Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvButton(
+                  text = "Pick .torrent File",
+                  icon = Icons.Default.Description,
+                  onClick = {
+                    torrentFilePicker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*"))
+                  }
+                )
+                TvButton(
+                  text = "Add Magnet Link",
+                  icon = Icons.Default.Add,
+                  isPrimary = true,
+                  onClick = { showAddMagnetDialog = true }
+                )
+              }
             }
           }
         }
@@ -201,7 +237,7 @@ fun TorrentScreen(
     }
   }
 
-  // Add Magnet Dialog
+  // Add Magnet / Torrent Dialog
   if (showAddMagnetDialog) {
     AlertDialog(
       onDismissRequest = { closeAddMagnetDialog() },
@@ -209,9 +245,60 @@ fun TorrentScreen(
         dismissOnBackPress = true,
         dismissOnClickOutside = true
       ),
-      title = { Text("Add Magnet Link") },
+      title = { Text("Add Torrent (Magnet or .torrent File)") },
       text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          // Option 1: File Picker Card
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Have a .torrent file?",
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 13.sp
+                )
+                Text(
+                  text = "Pick directly from storage or USB Drive",
+                  fontSize = 11.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+              }
+              TvButton(
+                text = "Pick File",
+                icon = Icons.Default.Description,
+                isPrimary = true,
+                onClick = {
+                  torrentFilePicker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*"))
+                }
+              )
+            }
+          }
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            HorizontalDivider(modifier = Modifier.weight(1f))
+            Text(
+              text = "  OR PASTE MAGNET LINK  ",
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            HorizontalDivider(modifier = Modifier.weight(1f))
+          }
+
           OutlinedTextField(
             value = magnetInputText,
             onValueChange = { magnetInputText = it },
@@ -279,7 +366,7 @@ fun TorrentScreen(
       },
       confirmButton = {
         TvButton(
-          text = "Add Torrent",
+          text = "Add Magnet",
           isPrimary = true,
           onClick = {
             if (magnetInputText.isNotBlank()) {
@@ -415,7 +502,6 @@ private fun TorrentItemCard(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Action row
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End

@@ -30,6 +30,9 @@ interface TorrentDao {
   @Query("UPDATE torrents SET status = :status, downloadSpeed = 0, uploadSpeed = 0, updatedAt = :updatedAt WHERE id = :id")
   suspend fun updateStatus(id: String, status: String, updatedAt: Long = System.currentTimeMillis())
 
+  @Query("UPDATE torrents SET name = :name, totalBytes = :totalBytes, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun updateMetadata(id: String, name: String, totalBytes: Long, updatedAt: Long = System.currentTimeMillis())
+
   @Query("""
     UPDATE torrents 
     SET progress = :progress, downloadedBytes = :downloaded, totalBytes = :total, 
