@@ -161,7 +161,8 @@ class TorrentManager private constructor(context: Context) {
                             val cachedFile = File(torrentsDir, "${torrent.id}.torrent")
 
                             if (cachedFile.exists() && cachedFile.length() > 0) {
-                                val info = TorrentInfo(cachedFile)
+                                val bytes = cachedFile.readBytes()
+                                val info = try { TorrentInfo.bdecode(bytes) } catch (e: Exception) { TorrentInfo(cachedFile) }
                                 sessionManager?.download(info, saveDir)
                             } else if (torrent.magnetUri.isNotBlank()) {
                                 sessionManager?.download(torrent.magnetUri, saveDir)
@@ -316,8 +317,12 @@ class TorrentManager private constructor(context: Context) {
         val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw IllegalArgumentException("Cannot open stream for Uri: $uri")
 
-        val torrentInfo = TorrentInfo(bytes)
-        val infoHash = torrentInfo.infoHash().toHex()
+        val torrentInfo = try {
+            TorrentInfo.bdecode(bytes)
+        } catch (e: Exception) {
+            TorrentInfo(bytes)
+        }
+        val infoHash = torrentInfo.infoHash().toString()
         val torrentName = if (torrentInfo.name().isNotBlank()) torrentInfo.name() else "Torrent_$infoHash"
         val totalBytes = torrentInfo.totalSize()
         val generatedMagnet = try { torrentInfo.makeMagnetUri() ?: "" } catch (e: Exception) { "" }
