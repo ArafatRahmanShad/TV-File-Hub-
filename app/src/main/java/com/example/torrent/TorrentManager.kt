@@ -15,6 +15,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
 
+// আপনার প্রজেক্টের সব সাব-ফোল্ডারের ইম্পোর্ট ফিক্স
+import com.example.torrent.data.*
+import com.example.torrent.db.*
+import com.example.torrent.model.*
+
 class TorrentManager private constructor(context: Context) {
 
     private val appContext: Context = context.applicationContext
@@ -92,7 +97,6 @@ class TorrentManager private constructor(context: Context) {
 
         for (torrent in activeList) {
             try {
-                // String ID -> Sha1Hash conversion fix
                 val sha1 = try { Sha1Hash(torrent.id) } catch (e: Exception) { null } ?: continue
                 val handle = sessionManager?.find(sha1)
 
