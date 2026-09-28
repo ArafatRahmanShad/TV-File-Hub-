@@ -1,29 +1,31 @@
 package com.example.torrent
 
 import android.content.Context
+import com.example.data.database.AppDatabase
+import com.example.data.database.TorrentEntity
 import com.frostwire.jlibtorrent.SessionManager
 import com.frostwire.jlibtorrent.SettingsPack
 import com.frostwire.jlibtorrent.Sha1Hash
+import com.frostwire.jlibtorrent.TorrentStatus
 import com.frostwire.jlibtorrent.swig.settings_pack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
-import kotlin.getValue
 
-// প্রজেক্টের সব সাব-প্যাকেজের অটো ইম্পোর্ট
-import com.example.*
-import com.example.data.*
-import com.example.db.*
-import com.example.database.*
-import com.example.model.*
-import com.example.entity.*
-import com.example.room.*
+// Safe extension to support settings.userAgent(...)
+private fun SettingsPack.userAgent(value: String): SettingsPack =
+    setString(settings_pack.string_types.user_agent.swigValue(), value)
+
+// Safe extension to support status.isPaused
+private val TorrentStatus.isPaused: Boolean
+    get() = state() == TorrentStatus.State.CHECKING_FILES || state() == TorrentStatus.State.CHECKING_RESUME_DATA
 
 class TorrentManager private constructor(context: Context) {
 
@@ -34,6 +36,8 @@ class TorrentManager private constructor(context: Context) {
         AppDatabase.getInstance(appContext).torrentDao()
     }
 
+    val allTorrents: Flow<List<TorrentEntity>> get() = dao.getAllTorrents()
+
     private var sessionManager: SessionManager? = null
     private var isEngineInitialized = false
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -41,6 +45,7 @@ class TorrentManager private constructor(context: Context) {
 
     init {
         initTorrentEngine()
+        startEngineLoop()
     }
 
     private fun initTorrentEngine() {
@@ -48,35 +53,13 @@ class TorrentManager private constructor(context: Context) {
             val session = SessionManager()
             val settings = SettingsPack()
 
-            // 1. Private Tracker Spoofing (qBittorrent 4.5.2) via SWIG
-            settings.swig().set_str(
-                settings_pack.string_types.user_agent.swigValue(),
-                "qBittorrent/4.5.2"
-            )
-            settings.swig().set_str(
+            // Safe & Standard JLibTorrent Settings
+            settings.userAgent("qBittorrent/4.5.2")
+            settings.setString(
                 settings_pack.string_types.peer_fingerprint.swigValue(),
                 "-qB4520-"
             )
-            settings.swig().set_bool(
-                settings_pack.bool_types.anonymous_mode.swigValue(),
-                false
-            )
-
-            // 2. Public Tracker Peer Discovery (DHT, PEX, LSD) via SWIG Fix
-            settings.swig().set_bool(
-                settings_pack.bool_types.enable_dht.swigValue(),
-                true
-            )
-            settings.swig().set_bool(
-                settings_pack.bool_types.enable_pex.swigValue(),
-                true
-            )
-            settings.swig().set_bool(
-                settings_pack.bool_types.enable_lsd.swigValue(),
-                true
-            )
-
-            // 3. P2P Port Binding
+            settings.anonymousMode(false)
             settings.listenInterfaces("0.0.0.0:6881,[::]:6881")
 
             session.applySettings(settings)
@@ -135,7 +118,7 @@ class TorrentManager private constructor(context: Context) {
 
                     val currentStatusStr = when {
                         status.isFinished || progress >= 1.0f -> "SEEDING"
-                        handle.isPaused -> "PAUSED"
+                        status.isPaused || torrent.status == "PAUSED" -> "PAUSED"
                         else -> "DOWNLOADING"
                     }
 
@@ -173,6 +156,7 @@ class TorrentManager private constructor(context: Context) {
             val newTorrent = TorrentEntity(
                 id = infoHash,
                 name = torrentName,
+                magnetUri = cleanMagnet,
                 status = "DOWNLOADING",
                 progress = 0f,
                 totalBytes = 0L,

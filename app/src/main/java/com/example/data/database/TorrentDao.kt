@@ -21,6 +21,9 @@ interface TorrentDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertOrUpdate(torrent: TorrentEntity)
 
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insert(torrent: TorrentEntity)
+
   @Update
   suspend fun update(torrent: TorrentEntity)
 

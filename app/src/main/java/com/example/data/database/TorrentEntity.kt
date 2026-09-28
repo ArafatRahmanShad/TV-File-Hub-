@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 data class TorrentEntity(
   @PrimaryKey val id: String, // infoHash or UUID
   val name: String,
-  val magnetUri: String,
+  val magnetUri: String = "",
   val destinationType: String = "USB_HDD",
   val destinationUri: String? = null,
   val status: String = "DOWNLOADING", // QUEUED, DOWNLOADING, SEEDING, PAUSED, COMPLETED, ERROR
