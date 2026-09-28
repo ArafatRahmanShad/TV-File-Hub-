@@ -1,42 +1,28 @@
 package com.example.torrent
 
 import android.content.Context
-import android.net.Uri
-import com.example.data.database.AppDatabase
-import com.example.data.database.TorrentEntity
 import com.frostwire.jlibtorrent.SessionManager
 import com.frostwire.jlibtorrent.SettingsPack
 import com.frostwire.jlibtorrent.Sha1Hash
-import com.frostwire.jlibtorrent.TorrentStatus
 import com.frostwire.jlibtorrent.swig.settings_pack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
-import java.util.UUID
-
-// Extension to support settings.userAgent(...)
-private fun SettingsPack.userAgent(value: String): SettingsPack =
-    setString(settings_pack.string_types.user_agent.swigValue(), value)
-
-// Extension to support status.isPaused
-private val TorrentStatus.isPaused: Boolean
-    get() = state() == TorrentStatus.State.CHECKING_FILES || state() == TorrentStatus.State.CHECKING_RESUME_DATA
 
 class TorrentManager private constructor(context: Context) {
 
     private val appContext: Context = context.applicationContext
-    
-    // ডাটাবেজ DAO ইনিশিয়ালাইজেশন
-    private val dao = AppDatabase.getInstance(appContext).torrentDao()
 
-    val allTorrents: Flow<List<TorrentEntity>> = dao.getAllTorrents()
+    // App Database / DAO lookup
+    private val dao by lazy {
+        AppDatabase.getInstance(appContext).torrentDao()
+    }
 
     private var sessionManager: SessionManager? = null
     private var isEngineInitialized = false
@@ -45,7 +31,6 @@ class TorrentManager private constructor(context: Context) {
 
     init {
         initTorrentEngine()
-        startEngineLoop()
     }
 
     private fun initTorrentEngine() {
@@ -53,7 +38,7 @@ class TorrentManager private constructor(context: Context) {
             val session = SessionManager()
             val settings = SettingsPack()
 
-            // qBittorrent 4.5.2 Client Identity Spoofing
+            // 1. Private Tracker Spoofing (qBittorrent 4.5.2)
             settings.userAgent("qBittorrent/4.5.2")
             settings.setString(
                 settings_pack.string_types.peer_fingerprint.swigValue(),
@@ -61,11 +46,20 @@ class TorrentManager private constructor(context: Context) {
             )
             settings.anonymousMode(false)
 
-            // P2P নেটওয়ার্ক পোর্ট সেটআপ
+            // 2. Public Tracker DHT/PEX/LSD Enable
+            settings.setBoolean(settings_pack.boolean_types.enable_dht.swigValue(), true)
+            settings.setBoolean(settings_pack.boolean_types.enable_pex.swigValue(), true)
+            settings.setBoolean(settings_pack.boolean_types.enable_lsd.swigValue(), true)
+
+            // 3. P2P Port Binding
             settings.listenInterfaces("0.0.0.0:6881,[::]:6881")
 
             session.applySettings(settings)
             session.start()
+
+            try {
+                session.postDhtStats()
+            } catch (ignored: Exception) {}
 
             this.sessionManager = session
             this.isEngineInitialized = true
@@ -88,13 +82,18 @@ class TorrentManager private constructor(context: Context) {
     private suspend fun processTorrentTick() {
         if (!isEngineInitialized || sessionManager == null) return
 
-        val activeList = dao.getActiveTorrents()
+        val activeList = try {
+            dao.getActiveTorrents()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
         if (activeList.isEmpty()) return
 
         for (torrent in activeList) {
             try {
-                // String ID -> Sha1Hash ফিক্স
-                val sha1 = runCatching { Sha1Hash(torrent.id) }.getOrNull() ?: continue
+                // String ID -> Sha1Hash conversion fix
+                val sha1 = try { Sha1Hash(torrent.id) } catch (e: Exception) { null } ?: continue
                 val handle = sessionManager?.find(sha1)
 
                 if (handle != null && handle.isValid) {
@@ -112,7 +111,7 @@ class TorrentManager private constructor(context: Context) {
 
                     val currentStatusStr = when {
                         status.isFinished || progress >= 1.0f -> "SEEDING"
-                        status.isPaused || torrent.status == "PAUSED" -> "PAUSED"
+                        status.isPaused -> "PAUSED"
                         else -> "DOWNLOADING"
                     }
 
@@ -138,43 +137,33 @@ class TorrentManager private constructor(context: Context) {
 
     suspend fun addMagnet(magnetUri: String, destinationOverride: String? = null): String = withContext(Dispatchers.IO) {
         val cleanMagnet = magnetUri.trim()
-        val infoHash = parseInfoHash(cleanMagnet) ?: UUID.randomUUID().toString().replace("-", "").take(40)
-        val name = parseMagnetName(cleanMagnet)
-
         val saveDir = File(appContext.getExternalFilesDir(null), "Downloads")
         if (!saveDir.exists()) {
             saveDir.mkdirs()
         }
 
-        val existing = dao.getTorrentById(infoHash)
-        if (existing != null) {
-            if (existing.status == "PAUSED") {
-                resumeTorrent(infoHash)
-            }
-            return@withContext infoHash
-        }
+        val infoHash = extractInfoHash(cleanMagnet) ?: System.currentTimeMillis().toString()
+        val torrentName = extractTorrentName(cleanMagnet) ?: "Downloading Metadata..."
 
-        val entity = TorrentEntity(
-            id = infoHash,
-            name = name,
-            magnetUri = cleanMagnet,
-            destinationType = "INTERNAL",
-            destinationUri = null,
-            status = "DOWNLOADING",
-            progress = 0.0f,
-            downloadedBytes = 0L,
-            totalBytes = 2_450_000_000L,
-            downloadSpeed = 0L,
-            uploadSpeed = 0L,
-            uploadedBytes = 0L,
-            peers = 0,
-            seeds = 0,
-            ratio = 0f,
-            errorMessage = null,
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
-        )
-        dao.insertOrUpdate(entity)
+        try {
+            val newTorrent = TorrentEntity(
+                id = infoHash,
+                name = torrentName,
+                status = "DOWNLOADING",
+                progress = 0f,
+                totalBytes = 0L,
+                downloadedBytes = 0L,
+                uploadedBytes = 0L,
+                downloadSpeed = 0L,
+                uploadSpeed = 0L,
+                seeds = 0,
+                peers = 0,
+                ratio = 0f
+            )
+            dao.insert(newTorrent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         if (isEngineInitialized && sessionManager != null) {
             try {
@@ -191,60 +180,81 @@ class TorrentManager private constructor(context: Context) {
     fun pauseTorrent(id: String) {
         scope.launch {
             if (!isEngineInitialized) return@launch
-            val handle = runCatching { sessionManager?.find(Sha1Hash(id)) }.getOrNull()
-            handle?.pause()
-            dao.updateStatus(id, "PAUSED")
+            try {
+                val handle = sessionManager?.find(Sha1Hash(id))
+                handle?.pause()
+                dao.updateStatus(id, "PAUSED")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun resumeTorrent(id: String) {
         scope.launch {
             if (!isEngineInitialized) return@launch
-            val handle = runCatching { sessionManager?.find(Sha1Hash(id)) }.getOrNull()
-            handle?.resume()
-            val torrent = dao.getTorrentById(id) ?: return@launch
-            val newStatus = if (torrent.progress >= 1f) "SEEDING" else "DOWNLOADING"
-            dao.updateStatus(id, newStatus)
-            startEngineLoop()
+            try {
+                val handle = sessionManager?.find(Sha1Hash(id))
+                handle?.resume()
+                val torrent = dao.getTorrentById(id)
+                val newStatus = if (torrent != null && torrent.progress >= 1f) "SEEDING" else "DOWNLOADING"
+                dao.updateStatus(id, newStatus)
+                startEngineLoop()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun deleteTorrent(id: String, deleteFiles: Boolean = true) {
         scope.launch {
             if (!isEngineInitialized) return@launch
-            val handle = runCatching { sessionManager?.find(Sha1Hash(id)) }.getOrNull()
-            if (handle != null && handle.isValid) {
-                sessionManager?.remove(handle)
-            }
-            dao.deleteById(id)
-        }
-    }
-
-    private fun parseMagnetName(magnet: String): String {
-        try {
-            val uri = Uri.parse(magnet)
-            val dn = uri.getQueryParameter("dn")
-            if (!dn.isNullOrBlank()) {
-                return URLDecoder.decode(dn, "UTF-8")
-            }
-        } catch (e: Exception) {
-            val regex = Regex("dn=([^&]+)")
-            val match = regex.find(magnet)
-            if (match != null) {
-                val raw = match.groupValues[1]
-                return try {
-                    URLDecoder.decode(raw, "UTF-8")
-                } catch (ex: Exception) {
-                    raw
+            try {
+                val handle = sessionManager?.find(Sha1Hash(id))
+                if (handle != null && handle.isValid) {
+                    sessionManager?.remove(handle)
                 }
+                dao.deleteById(id)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
-        return "Torrent_${System.currentTimeMillis()}"
     }
 
-    private fun parseInfoHash(magnet: String): String? {
-        val regex = Regex("urn:btih:([a-zA-Z0-9]+)")
-        return regex.find(magnet)?.groupValues?.get(1)?.lowercase()
+    private fun extractInfoHash(magnet: String): String? {
+        val regex = Regex("xt=urn:btih:([a-zA-F0-9]+)", RegexOption.IGNORE_CASE)
+        val match = regex.find(magnet)?.groupValues?.get(1) ?: return null
+
+        return when (match.length) {
+            40 -> match.lowercase()
+            32 -> base32ToHex(match)
+            else -> match.lowercase()
+        }
+    }
+
+    private fun extractTorrentName(magnet: String): String? {
+        val regex = Regex("dn=([^&]+)")
+        val match = regex.find(magnet)?.groupValues?.get(1)
+        return match?.let {
+            try { URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it }
+        }
+    }
+
+    private fun base32ToHex(base32: String): String {
+        val base32Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        var bits = ""
+        for (char in base32.uppercase()) {
+            val valIndex = base32Chars.indexOf(char)
+            if (valIndex >= 0) {
+                bits += String.format("%5s", Integer.toBinaryString(valIndex)).replace(' ', '0')
+            }
+        }
+        val hex = StringBuilder()
+        for (i in 0 until bits.length - 3 step 4) {
+            val chunk = bits.substring(i, i + 4)
+            hex.append(Integer.toHexString(chunk.toInt(2)))
+        }
+        return hex.toString()
     }
 
     companion object {
