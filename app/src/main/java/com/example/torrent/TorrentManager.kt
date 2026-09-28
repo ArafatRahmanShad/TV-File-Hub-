@@ -14,6 +14,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
+import kotlin.getValue
+
+// প্রজেক্টের সব সাব-প্যাকেজের অটো ইম্পোর্ট
+import com.example.*
+import com.example.data.*
+import com.example.db.*
+import com.example.database.*
+import com.example.model.*
+import com.example.entity.*
+import com.example.room.*
 
 class TorrentManager private constructor(context: Context) {
 
@@ -38,18 +48,33 @@ class TorrentManager private constructor(context: Context) {
             val session = SessionManager()
             val settings = SettingsPack()
 
-            // 1. Private Tracker Spoofing (qBittorrent 4.5.2)
-            settings.userAgent("qBittorrent/4.5.2")
-            settings.setString(
+            // 1. Private Tracker Spoofing (qBittorrent 4.5.2) via SWIG
+            settings.swig().set_str(
+                settings_pack.string_types.user_agent.swigValue(),
+                "qBittorrent/4.5.2"
+            )
+            settings.swig().set_str(
                 settings_pack.string_types.peer_fingerprint.swigValue(),
                 "-qB4520-"
             )
-            settings.anonymousMode(false)
+            settings.swig().set_bool(
+                settings_pack.bool_types.anonymous_mode.swigValue(),
+                false
+            )
 
-            // 2. Public Tracker DHT/PEX/LSD Enable
-            settings.setBoolean(settings_pack.boolean_types.enable_dht.swigValue(), true)
-            settings.setBoolean(settings_pack.boolean_types.enable_pex.swigValue(), true)
-            settings.setBoolean(settings_pack.boolean_types.enable_lsd.swigValue(), true)
+            // 2. Public Tracker Peer Discovery (DHT, PEX, LSD) via SWIG Fix
+            settings.swig().set_bool(
+                settings_pack.bool_types.enable_dht.swigValue(),
+                true
+            )
+            settings.swig().set_bool(
+                settings_pack.bool_types.enable_pex.swigValue(),
+                true
+            )
+            settings.swig().set_bool(
+                settings_pack.bool_types.enable_lsd.swigValue(),
+                true
+            )
 
             // 3. P2P Port Binding
             settings.listenInterfaces("0.0.0.0:6881,[::]:6881")
@@ -110,7 +135,7 @@ class TorrentManager private constructor(context: Context) {
 
                     val currentStatusStr = when {
                         status.isFinished || progress >= 1.0f -> "SEEDING"
-                        status.isPaused -> "PAUSED"
+                        handle.isPaused -> "PAUSED"
                         else -> "DOWNLOADING"
                     }
 
