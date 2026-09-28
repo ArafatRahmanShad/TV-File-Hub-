@@ -36,5 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
         instance
       }
     }
+
+    fun getInstance(context: Context): AppDatabase = getDatabase(context)
   }
 }
